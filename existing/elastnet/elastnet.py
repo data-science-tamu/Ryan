@@ -6,28 +6,30 @@ from sklearn import preprocessing
 
 # Setup
 
-num_neuron = 128
-learn_rate = 0.001
+num_neuron = 128 # Number of neurons in hidden layers (how many features the model should learn)
+learn_rate = 0.001  # Learning rate (how fast the model should learn)
 
-x_disp = np.loadtxt('data_incompressible/m_rose_nu_05/disp_coord')
-y_disp = np.loadtxt('data_incompressible/m_rose_nu_05/disp_data')
-x_elas = np.loadtxt('data_incompressible/m_rose_nu_05/strain_coord')
+x_disp = np.loadtxt('data_incompressible/m_rose_nu_05/disp_coord')  # Displacement coordinates
+y_disp = np.loadtxt('data_incompressible/m_rose_nu_05/disp_data') 
+x_elas = np.loadtxt('data_incompressible/m_rose_nu_05/strain_coord') # Elasticity coordinates
 y_elas = np.loadtxt('data_incompressible/m_rose_nu_05/m_data')
 
-ss_x = preprocessing.StandardScaler()
-x_disp = ss_x.fit_transform(x_disp.reshape(-1, 2))
+ss_x = preprocessing.StandardScaler() # Standardizes the features by removing the mean and scaling to unit variance
+x_disp = ss_x.fit_transform(x_disp.reshape(-1, 2)) # Reshape the data to 2D array
 x_elas = ss_x.fit_transform(x_elas.reshape(-1, 2))
 
-def weight_variable(shape):
+def weight_variable(shape): # intialized weights with a small amount of noise for symmetry breaking and to prevent 0 gradients 
     initial = tf.truncated_normal(shape, stddev = 0.1)
     return tf.Variable(initial)
-def bias_variable(shape):
+def bias_variable(shape): # intialized biases with a small positive value to avoid dead neurons
     initial = tf.constant(0.1, shape = shape)
     return tf.Variable(initial)
 
 logs_path = 'TensorBoard/'
 
 # Define elasticity network
+# The layers of the neural network:
+# The network is a feedforward neural network with 17 hidden layers and 128 neurons in each layer
 
 xs_disp = tf.placeholder(tf.float32, [None, 2])
 ys_disp = tf.placeholder(tf.float32, [None, 2]) # u & v
@@ -175,15 +177,23 @@ y_pred_v = y_predb[:, 0]
 
 # Read displacements
 
-y_u = ys_disp[:, 0]
-y_v = y_pred_v
+y_u = ys_disp[:, 0] # the actual displacement in the x-direction
+y_v = y_pred_v # the predicted displacement in the x-direction
 
 # Calculate strains
+# The strains are calculated by taking the derivative of the displacement field
+# The derivative is calculated using a convolutional neural network
+# The derivative of the displacement field is the strain field
+
+# Convolution: Convolves the displacement matrices to calculate strains.
+# y_e_xx: The strain in the x-direction
+# y_e_yy: The strain in the y-direction
+# y_r_xy: The strain in the xy-direction (shear strain)
 
 def conv2d(x, W):
     return tf.nn.conv2d(x, W, strides = [1, 1, 1, 1], padding = 'VALID')
 
-u_matrix = tf.reshape(y_u, [257, 257])
+u_matrix = tf.reshape(y_u, [257, 257]) # u is the displacement components
 v_matrix = tf.reshape(y_v, [257, 257])
 u_matrix_4d = tf.reshape(u_matrix, [-1, 257, 257, 1])
 v_matrix_4d = tf.reshape(v_matrix, [-1, 257, 257, 1])
@@ -200,11 +210,15 @@ y_e_yy = 100*tf.reshape(y_e_yy, [-1])
 y_r_xy = 100*tf.reshape(y_r_xy, [-1])
 
 # Define elastic tensors
+# The elastic tensor is a 3x3 matrix that describes the relationship between stress and strain in a material
+# Figure (2) in the inverse problem paper
 
 c_matrix = (1/(1-(1/2.0)**2))*np.array([[1, 1/2.0, 0], [1/2.0, 1, 0], [0, 0, (1-1/2.0)/2.0]])
 c_matrix = tf.constant(c_matrix, dtype = tf.float32)
 
 # Calculate stresses
+# The stresses are calculated by multiplying the elastic tensor by the strain field
+# The stress field is the output of the neural network
 
 strain    = tf.stack([y_e_xx, y_e_yy, y_r_xy], axis = 1)
 modulus   = tf.stack([y_pred_m, y_pred_m, y_pred_m], axis = 1)
@@ -214,6 +228,7 @@ stress_yy = stress[:, 1]
 stress_xy = stress[:, 2]
 
 # Calculate sum of stresses
+# The sum of the stresses is calculated by taking the sum of the sub-stresses
 
 stress_xx_matrix = tf.reshape(stress_xx, [256, 256])
 stress_yy_matrix = tf.reshape(stress_yy, [256, 256])
@@ -252,6 +267,10 @@ fx_conv_sum_norm = tf.divide(fx_conv_sum, y_pred_m_conv)
 fy_conv_sum_norm = tf.divide(fy_conv_sum, y_pred_m_conv)
 
 # Calculate loss
+# The loss is calculated by taking the mean absolute error (MAE) between the predicted and actual stresses
+# The loss is minimized using the Adam optimizer
+
+# Computes the loss based on the mean absolute error between the predicted and actual stresses
 
 mean_modu = tf.constant(np.mean(y_elas), dtype = tf.float32)
 loss_x = tf.reduce_mean(tf.abs(fx_conv_sum_norm))
@@ -260,11 +279,15 @@ loss_m = tf.abs(tf.reduce_mean(y_pred_m) - mean_modu)
 loss_v = tf.abs(tf.reduce_mean(y_pred_v))
 loss = loss_x + loss_y + loss_m/100 + loss_v/100
 err = tf.reduce_sum(tf.abs(y_elas - y_pred_m))
-train_step = tf.train.AdamOptimizer(learn_rate).minimize(loss)
+train_step = tf.train.AdamOptimizer(learn_rate).minimize(loss) # Optimizes the loss function using the Adam optimizer
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 
 # Training process
+# The model is trained using the training data
+# Runs the training step 200,001 times, printing the loss and error every 100 iterations
+# Saves the predicted stresses to a file
+# Prints the elapsed time
 
 start_time  = time.time()
 for i in range(200001):
